@@ -546,7 +546,9 @@ def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool,
             if mb_data.get("artist_mbid"):
                 mb_mbid = mb_data["artist_mbid"]
 
-    # ── 4. Download audio ──
+    # ── 4. Ensure album is unique per track when no real album found ──
+    if not track.album:
+        track.album = track.song or track.title
     track.dl_path = download_track(details, TMP_DIR)
     if not track.dl_path:
         return None
