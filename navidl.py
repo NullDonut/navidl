@@ -566,6 +566,11 @@ def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool,
     if not cover_path.exists() and not no_artist_cover:
         fetch_artist_image(track.artist, cover_path, mb_mbid)
 
+    # ── 8. Fallback: use YouTube thumbnail as artist cover if no artist image found ──
+    if not cover_path.exists() and thumb_path.exists():
+        shutil.copy2(str(thumb_path), str(cover_path))
+        log.info("  Artist cover (YT fallback): %s", cover_path)
+
     # ── 8. Tag ──
     tag_file(track, track.dl_path)
 
