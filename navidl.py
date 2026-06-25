@@ -265,20 +265,44 @@ def musicbrainz_lookup(artist_hint: str, song_hint: str) -> Optional[dict]:
 
 # ──────────────────────── Cover Art ─────────────────────────────────────
 
-def download_cover(thumb_url: str, output_path: Path) -> bool:
-    """Download thumbnail/cover image."""
-    if not thumb_url:
+def download_image(url: str, output_path: Path) -> bool:
+    """Download any image from a URL to a file."""
+    if not url:
         return False
     try:
-        resp = requests.get(thumb_url, timeout=30)
+        resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(resp.content)
-        log.info("Cover saved: %s", output_path)
         return True
     except Exception as e:
-        log.warning("Cover download failed: %s", e)
+        log.warning("Image download failed: %s", e)
         return False
+
+
+def fetch_artist_image(artist_name: str, output_path: Path) -> bool:
+    """Fetch artist image from Deezer public API and save as cover.jpg."""
+    if output_path.exists():
+        log.info("  Artist cover exists: %s", output_path)
+        return True
+    try:
+        url = "https://api.deezer.com/search/artist"
+        params = {"q": artist_name, "limit": 1}
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        artists = data.get("data", [])
+        if artists:
+            img_url = artists[0].get("picture_medium", "") or artists[0].get("picture_big", "")
+            if img_url:
+                ok = download_image(img_url, output_path)
+                if ok:
+                    log.info("  Artist cover saved: %s", output_path)
+                    return True
+        log.info("  No artist image found on Deezer for: %s", artist_name)
+    except Exception as e:
+        log.warning("  Artist image fetch failed: %s", e)
+    return False
 
 
 def embed_cover(audio_path: Path, cover_path: Path) -> bool:
@@ -512,27 +536,31 @@ def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool)
     # ── 5. Determine final path ──
     track.final_path = navidrome_path(track)
 
-    # ── 6. Download cover ──
+    # ── 6. Download temp thumbnail for embedding ──
+    thumb_path = TMP_DIR / f"{track.yt_id}_thumb.jpg"
+    if thumb_url:
+        download_image(thumb_url, thumb_path)
+
+    # ── 7. Fetch artist image as cover.jpg (skip if exists) ──
     cover_path = track.final_path.parent / "cover.jpg"
     track.cover_path = cover_path
     if not cover_path.exists():
-        download_cover(thumb_url, cover_path)
-    else:
-        log.info("  Cover exists: %s", cover_path)
+        fetch_artist_image(track.artist, cover_path)
 
-    # ── 7. Tag ──
+    # ── 8. Tag ──
     tag_file(track, track.dl_path)
 
-    # ── 8. Embed cover ──
-    if cover_path.exists():
-        embed_cover(track.dl_path, cover_path)
+    # ── 9. Embed song cover from YouTube thumbnail ──
+    if thumb_path.exists():
+        embed_cover(track.dl_path, thumb_path)
+        thumb_path.unlink(missing_ok=True)
 
-    # ── 9. Move to final location ──
+    # ── 10. Move to final location ──
     track.final_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(track.dl_path), str(track.final_path))
     log.info("  → %s", track.final_path)
 
-    # ── 10. Write .nfo for debugging ──
+    # ── 11. Write .nfo for debugging ──
     nfo_path = track.final_path.with_suffix(".nfo.json")
     nfo_data = {
         "yt_id": track.yt_id,
