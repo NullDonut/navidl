@@ -106,21 +106,26 @@ def download_track(info: dict, output_dir: Path) -> Path:
         "yt-dlp",
         "-f", "bestaudio/best",
         "--extract-audio",
-        "--audio-format", "opus",          # best quality/size for Navidrome
+        "--audio-format", "opus",
         "--audio-quality", "0",
         "--output", tmpl,
         "--no-warnings",
-        "--print", "filename",
+        "--print", "after_move:filepath",
         f"https://youtube.com/watch?v={info['id']}",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         log.error("Download failed for %s: %s", info["id"], result.stderr[:300])
         return None
-    path = Path(result.stdout.strip().split("\n")[-1])
+    path = Path(result.stdout.strip().split("\n")[-1].strip())
     if not path.exists():
-        log.error("Downloaded file not found: %s", path)
-        return None
+        # fallback: scan directory for matching file
+        matches = list(output_dir.glob(f"{info['id']}.*"))
+        if matches:
+            path = matches[0]
+        else:
+            log.error("Downloaded file not found: %s", path)
+            return None
     return path
 
 
