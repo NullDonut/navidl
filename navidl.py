@@ -32,7 +32,7 @@ NAVIDROME_FORMAT = "{artist}/{album}/{track:02d} - {title}"
 
 # Override these per-run with --album and --artist
 DEFAULT_ARTIST = "Unknown Artist"
-DEFAULT_ALBUM   = "YouTube Playlist"
+DEFAULT_ALBUM   = "Singles"
 
 # ───────────────────────────── Dataclasses ──────────────────────────────
 
@@ -392,7 +392,7 @@ def tag_file(track: Track, audio_path: Path):
     tag_map = {
         "title": track.song or track.title,
         "artist": artist_str,
-        "album": track.album,
+        "album": track.album or "",
         "date": str(track.year) if track.year else "",
         "tracknumber": str(track.track_num),
         "tracktotal": str(track.track_total),
@@ -622,7 +622,7 @@ def main():
     TMP_DIR.mkdir(parents=True, exist_ok=True)
 
     use_mb = not args.no_musicbrainz
-    album = args.album or DEFAULT_ALBUM
+    album = args.album or ""
 
     # Fetch playlist
     entries = get_playlist_info(args.url)
