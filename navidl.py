@@ -110,25 +110,22 @@ def download_track(info: dict, output_dir: Path) -> Path:
         "--audio-quality", "0",
         "--output", tmpl,
         "--no-warnings",
-        "--print", "after_move:filepath",
+        "--newline",
+        "--progress",
         f"https://youtube.com/watch?v={info['id']}",
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
-    # stderr goes to terminal — yt-dlp shows download progress there
+    log.info("  Downloading...")
     sys.stdout.flush()
-    if result.returncode != 0:
-        log.error("Download failed for %s", info["id"])
+    proc = subprocess.Popen(cmd)
+    proc.wait()
+    if proc.returncode != 0:
+        log.error("  Download failed for %s", info["id"])
         return None
-    path = Path(result.stdout.strip().split("\n")[-1].strip())
-    if not path.exists():
-        # fallback: scan directory for matching file
-        matches = list(output_dir.glob(f"{info['id']}.*"))
-        if matches:
-            path = matches[0]
-        else:
-            log.error("Downloaded file not found: %s", path)
-            return None
-    return path
+    matches = list(output_dir.glob(f"{info['id']}.*"))
+    if matches:
+        return matches[0]
+    log.error("  Downloaded file not found")
+    return None
 
 
 def get_video_details(video_id: str) -> dict:
