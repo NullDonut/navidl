@@ -113,9 +113,11 @@ def download_track(info: dict, output_dir: Path) -> Path:
         "--print", "after_move:filepath",
         f"https://youtube.com/watch?v={info['id']}",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+    # stderr goes to terminal — yt-dlp shows download progress there
+    sys.stdout.flush()
     if result.returncode != 0:
-        log.error("Download failed for %s: %s", info["id"], result.stderr[:300])
+        log.error("Download failed for %s", info["id"])
         return None
     path = Path(result.stdout.strip().split("\n")[-1].strip())
     if not path.exists():
