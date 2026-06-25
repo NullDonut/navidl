@@ -206,9 +206,8 @@ def parse_youtube_title(raw_title: str, uploader: str) -> tuple[str, str, list[s
 def musicbrainz_lookup(artist_hint: str, song_hint: str) -> Optional[dict]:
     """
     Search MusicBrainz for track metadata.
-    Returns dict with artist, song, album, year, genre if found.
+    Returns dict with artist, song, album, year, genre, artist_mbid if found.
     """
-    # Rate-limit: be nice to MusicBrainz
     time.sleep(1.2)
 
     query = urllib.parse.quote(f'artist:"{artist_hint}" recording:"{song_hint}"')
@@ -231,20 +230,21 @@ def musicbrainz_lookup(artist_hint: str, song_hint: str) -> Optional[dict]:
     result = {
         "song": rec.get("title", song_hint),
         "artists": [],
+        "artist_mbid": "",
         "album": "",
         "year": 0,
         "genre": "",
     }
 
-    # Artist credits
-    for credit in rec.get("artist-credit", []):
+    # Artist credits (pick the primary artist's MBID from the first credit)
+    credits = rec.get("artist-credit", [])
+    for i, credit in enumerate(credits):
         if isinstance(credit, dict):
             name = credit.get("name") or credit.get("artist", {}).get("name", "")
             if name:
                 result["artists"].append(name)
-        elif isinstance(credit, str):
-            if credit.strip() in (",", "&", "feat.", "featuring"):
-                pass  # separator
+            if i == 0 and credit.get("artist", {}).get("id"):
+                result["artist_mbid"] = credit["artist"]["id"]
 
     # Album info
     releases = rec.get("releases", [])
@@ -254,7 +254,6 @@ def musicbrainz_lookup(artist_hint: str, song_hint: str) -> Optional[dict]:
         date = rel.get("date", "")
         if date:
             result["year"] = int(date[:4])
-        # Tags/genre
         for tag in rel.get("tags", []):
             if tag.get("count", 0) >= 1:
                 result["genre"] = tag.get("name", "")
@@ -280,28 +279,45 @@ def download_image(url: str, output_path: Path) -> bool:
         return False
 
 
-def fetch_artist_image(artist_name: str, output_path: Path) -> bool:
-    """Fetch artist image from Deezer public API and save as cover.jpg."""
+def fetch_artist_image(artist_name: str, output_path: Path, artist_mbid: str = "") -> bool:
+    """Fetch artist image and save as cover.jpg.
+    Uses MusicBrainz MBID for precise matching if available, otherwise falls back to Deezer name search.
+    """
     if output_path.exists():
-        log.info("  Artist cover exists: %s", output_path)
         return True
+
+    img_url = ""
+
+    # Try Deezer search with MBID context or name
     try:
-        url = "https://api.deezer.com/search/artist"
-        params = {"q": artist_name, "limit": 1}
-        resp = requests.get(url, params=params, timeout=15)
+        deezer_url = "https://api.deezer.com/search/artist"
+        resp = requests.get(deezer_url, params={"q": artist_name, "limit": 5}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-        artists = data.get("data", [])
-        if artists:
-            img_url = artists[0].get("picture_medium", "") or artists[0].get("picture_big", "")
-            if img_url:
-                ok = download_image(img_url, output_path)
-                if ok:
-                    log.info("  Artist cover saved: %s", output_path)
-                    return True
-        log.info("  No artist image found on Deezer for: %s", artist_name)
-    except Exception as e:
-        log.warning("  Artist image fetch failed: %s", e)
+        for artist in data.get("data", []):
+            candidate = artist.get("name", "")
+            # Accept if name matches closely (case-insensitive)
+            if candidate.lower() == artist_name.lower() or artist_name.lower() in candidate.lower():
+                img_url = artist.get("picture_medium", "") or artist.get("picture_big", "")
+                break
+    except Exception:
+        pass
+
+    if not img_url:
+        try:
+            resp = requests.get("https://api.deezer.com/search/artist", params={"q": artist_name, "limit": 1}, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("data"):
+                img_url = data["data"][0].get("picture_medium", "") or data["data"][0].get("picture_big", "")
+        except Exception:
+            pass
+
+    if img_url and download_image(img_url, output_path):
+        log.info("  Artist cover: %s", output_path)
+        return True
+
+    log.info("  No artist image found for: %s", artist_name)
     return False
 
 
@@ -476,7 +492,7 @@ def _sanitise(name: str) -> str:
 
 # ──────────────────────── Main Pipeline ─────────────────────────────────
 
-def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool) -> Optional[Track]:
+def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool, no_artist_cover: bool = False) -> Optional[Track]:
     """Full pipeline for one track."""
     yt_id = entry["id"]
     log.info("[%d/%d] Processing: %s", index + 1, total, entry.get("title", yt_id))
@@ -511,6 +527,7 @@ def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool)
     track.artists = artists
 
     # ── 3. MusicBrainz enrichment ──
+    mb_mbid = ""
     if use_mb:
         mb_data = musicbrainz_lookup(artist, song)
         if mb_data:
@@ -526,6 +543,8 @@ def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool)
                 track.year = mb_data["year"]
             if mb_data.get("genre"):
                 track.genre = mb_data["genre"]
+            if mb_data.get("artist_mbid"):
+                mb_mbid = mb_data["artist_mbid"]
 
     # ── 4. Download audio ──
     track.dl_path = download_track(details, TMP_DIR)
@@ -544,8 +563,8 @@ def process_track(entry: dict, index: int, total: int, album: str, use_mb: bool)
     # ── 7. Fetch artist image as cover.jpg (skip if exists) ──
     cover_path = track.final_path.parent / "cover.jpg"
     track.cover_path = cover_path
-    if not cover_path.exists():
-        fetch_artist_image(track.artist, cover_path)
+    if not cover_path.exists() and not no_artist_cover:
+        fetch_artist_image(track.artist, cover_path, mb_mbid)
 
     # ── 8. Tag ──
     tag_file(track, track.dl_path)
@@ -587,7 +606,8 @@ def main():
     parser.add_argument("--album", "-a", default="", help="Override album name")
     parser.add_argument("--artist", "-r", default="", help="Override artist name (for all tracks)")
     parser.add_argument("--no-musicbrainz", action="store_true", help="Skip MusicBrainz enrichment")
-    parser.add_argument("--output", "-o", default=None, help="Output base directory (default: ~/storage/music)")
+    parser.add_argument("--no-artist-cover", action="store_true", help="Skip artist image fetch for cover.jpg")
+    parser.add_argument("--output", "-o", default=None, help="Output base directory (default: ~/navidrome-music)")
     parser.add_argument("--start", type=int, default=1, help="Starting track number (default: 1)")
     parser.add_argument("--limit", type=int, default=0, help="Max tracks to process (default: all)")
 
@@ -618,7 +638,7 @@ def main():
 
     for i, entry in enumerate(entries):
         try:
-            track = process_track(entry, i + args.start - 1, total, album, use_mb)
+            track = process_track(entry, i + args.start - 1, total, album, use_mb, args.no_artist_cover)
             if track:
                 success += 1
         except KeyboardInterrupt:
