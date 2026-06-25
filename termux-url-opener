@@ -1,0 +1,13 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Termux URL opener — share a YouTube link → auto-download
+# Place this file at ~/bin/termux-url-opener and make executable
+
+URL="$1"
+ALBUM="YouTube Import $(date +%Y-%m-%d)"
+
+termux-wake-lock
+echo "Starting download: $URL"
+python3 ~/navidl/navidl.py "$URL" --album "$ALBUM" 2>&1 | tee ~/navidl/navidl.log
+cd ~/navidrome-music && git add -A && git commit -m "Import $ALBUM" 2>/dev/null
+termux-toast "Download + git committed!"
+termux-wake-unlock
