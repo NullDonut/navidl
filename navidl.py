@@ -303,6 +303,7 @@ def embed_cover(audio_path: Path, cover_path: Path) -> bool:
                 pass
         elif isinstance(audio, mutagen.oggopus.OggOpus):
             from mutagen.flac import Picture
+            import base64
             pic = Picture()
             pic.type = 3
             pic.mime = "image/jpeg"
@@ -311,7 +312,7 @@ def embed_cover(audio_path: Path, cover_path: Path) -> bool:
             pic.depth = 0
             pic.colors = 0
             pic.data = img_data
-            audio["metadata_block_picture"] = [pic.to_base64()]
+            audio["metadata_block_picture"] = [base64.b64encode(pic.write()).decode()]
         elif isinstance(audio, mutagen.flac.FLAC):
             from mutagen.flac import Picture
             pic = Picture()
