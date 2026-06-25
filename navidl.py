@@ -440,7 +440,7 @@ def navidrome_path(track: Track) -> Path:
     ext = track.dl_path.suffix if track.dl_path else ".opus"
     filename = f"{track.track_num:02d} - {_sanitise(track.song or track.title)}{ext}"
 
-    return OUTPUT_BASE / artist_dir / album_dir / filename
+    return OUTPUT_BASE / artist_dir / filename
 
 
 def _sanitise(name: str) -> str:
